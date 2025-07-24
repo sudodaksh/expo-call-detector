@@ -2,49 +2,160 @@ package expo.modules.calldetector
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.net.URL
+import expo.modules.kotlin.Promise
+import expo.modules.kotlin.exception.CodedException
+import android.content.Context
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyManager
+import android.os.Build
+import android.telephony.TelephonyCallback
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import android.os.Handler
+import android.os.Looper
+import expo.modules.interfaces.permissions.Permissions
 
 class ExpoCallDetectorModule : Module() {
-  // Each module class must implement the definition function. The definition consists of components
-  // that describes the module's functionality and behavior.
-  // See https://docs.expo.dev/modules/module-api for more details about available components.
+  private var telephonyManager: TelephonyManager? = null
+  private var phoneStateListener: PhoneStateListener? = null
+  private var telephonyCallback: Any? = null
+  private var isListening = false
+  
+  // Reuse a single main-thread Handler instead of allocating one per event
+  private val mainHandler = Handler(Looper.getMainLooper())
+
+  // Re‐usable payload to avoid Map allocation on every callback (only accessed from the main thread)
+  private val eventPayload: MutableMap<String, Any> = HashMap(2)
+
+  /**
+   * Executes [block] on the main thread, posting to the handler only when necessary.
+   */
+  private inline fun runOnMainThread(crossinline block: () -> Unit) {
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      block()
+    } else {
+      mainHandler.post { block() }
+    }
+  }
+  
+  private val context: Context
+    get() = appContext.reactContext ?: throw CodedException("Context not available")
+
   override fun definition() = ModuleDefinition {
-    // Sets the name of the module that JavaScript code will use to refer to the module. Takes a string as an argument.
-    // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
-    // The module will be accessible from `requireNativeModule('ExpoCallDetector')` in JavaScript.
     Name("ExpoCallDetector")
 
-    // Sets constant properties on the module. Can take a dictionary or a closure that returns a dictionary.
-    Constants(
-      "PI" to Math.PI
-    )
+    Events("onCallStateChanged")
 
-    // Defines event names that the module can send to JavaScript.
-    Events("onChange")
+    AsyncFunction("startListening") { promise: Promise ->
+      try {
+        if (isListening) {
+          promise.resolve(true)
+          return@AsyncFunction
+        }
 
-    // Defines a JavaScript synchronous function that runs the native code on the JavaScript thread.
-    Function("hello") {
-      "Hello world! 👋"
-    }
+        if (!hasPhoneStatePermission()) {
+          promise.reject("PERMISSION_DENIED", "READ_PHONE_STATE permission is required", null)
+          return@AsyncFunction
+        }
 
-    // Defines a JavaScript function that always returns a Promise and whose native code
-    // is by default dispatched on the different thread than the JavaScript runtime runs on.
-    AsyncFunction("setValueAsync") { value: String ->
-      // Send an event to JavaScript.
-      sendEvent("onChange", mapOf(
-        "value" to value
-      ))
-    }
+        telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
 
-    // Enables the module to be used as a native view. Definition components that are accepted as part of
-    // the view definition: Prop, Events.
-    View(ExpoCallDetectorView::class) {
-      // Defines a setter for the `url` prop.
-      Prop("url") { view: ExpoCallDetectorView, url: URL ->
-        view.webView.loadUrl(url.toString())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+          // Android 12+ uses TelephonyCallback
+          val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+            override fun onCallStateChanged(state: Int) {
+              handleCallStateChange(state)
+            }
+          }
+          telephonyCallback = callback
+          telephonyManager?.registerTelephonyCallback(
+            context.mainExecutor,
+            callback
+          )
+        } else {
+          // Older versions use PhoneStateListener
+          phoneStateListener = object : PhoneStateListener() {
+            override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+              handleCallStateChange(state)
+            }
+          }
+          telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
+        }
+
+        isListening = true
+        promise.resolve(true)
+      } catch (e: Exception) {
+        promise.reject("START_FAILED", "Failed to start call detection: ${e.message}", e)
       }
-      // Defines an event that the view can send to JavaScript.
-      Events("onLoad")
+    }
+
+    AsyncFunction("stopListening") { promise: Promise ->
+      try {
+        if (!isListening) {
+          promise.resolve(true)
+          return@AsyncFunction
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+          telephonyCallback?.let {
+            telephonyManager?.unregisterTelephonyCallback(it as TelephonyCallback)
+          }
+          telephonyCallback = null
+        } else {
+          phoneStateListener?.let {
+            telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE)
+          }
+          phoneStateListener = null
+        }
+
+        isListening = false
+        promise.resolve(true)
+      } catch (e: Exception) {
+        promise.reject("STOP_FAILED", "Failed to stop call detection: ${e.message}", e)
+      }
+    }
+
+    AsyncFunction("checkPermission") { promise: Promise ->
+      promise.resolve(hasPhoneStatePermission())
+    }
+
+    AsyncFunction("requestPermission") { promise: Promise ->
+      Permissions.askForPermissionsWithPermissionsManager(appContext.permissions, promise, Manifest.permission.READ_PHONE_STATE)
+    }
+
+    OnDestroy {
+      if (isListening) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+          telephonyCallback?.let {
+            telephonyManager?.unregisterTelephonyCallback(it as TelephonyCallback)
+          }
+        } else {
+          phoneStateListener?.let {
+            telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE)
+          }
+        }
+      }
+
+      // Clear the system service reference to avoid leaks
+      telephonyManager = null
+    }
+  }
+
+  private fun hasPhoneStatePermission(): Boolean {
+    return ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.READ_PHONE_STATE
+    ) == PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun handleCallStateChange(state: Int) {
+    val isActive = state != TelephonyManager.CALL_STATE_IDLE
+
+    runOnMainThread {
+      eventPayload["isActive"] = isActive
+      eventPayload["timestamp"] = System.currentTimeMillis()
+      sendEvent("onCallStateChanged", eventPayload)
     }
   }
 }

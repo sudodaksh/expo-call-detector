@@ -1,37 +1,55 @@
-import { useEvent } from 'expo';
-import ExpoCallDetector, { ExpoCallDetectorView } from 'expo-call-detector';
-import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import ExpoCallDetectorModule, { useCallDetector } from 'expo-call-detector';
+import { useState, useEffect } from 'react';
+import { Button, SafeAreaView, ScrollView, Text, View, Alert } from 'react-native';
 
 export default function App() {
-  const onChangePayload = useEvent(ExpoCallDetector, 'onChange');
+  const [hasPermission, setHasPermission] = useState(false);
+  const { isCallActive, isReady } = useCallDetector();
+
+  useEffect(() => {
+    checkPermission();
+  }, []);
+
+  const checkPermission = async () => {
+    try {
+      const permission = await ExpoCallDetectorModule.checkPermission();
+      setHasPermission(permission);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to check permission');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.container}>
-        <Text style={styles.header}>Module API Example</Text>
-        <Group name="Constants">
-          <Text>{ExpoCallDetector.PI}</Text>
+        <Text style={styles.header}>Call Detector Example</Text>
+        
+        <Group name="Permission Status">
+          <Text>Has Permission: {hasPermission ? 'Yes' : 'No'}</Text>
+          <View style={{ marginTop: 10, gap: 10 }}>
+            <Button title="Check Permission" onPress={checkPermission} />
+            {!hasPermission && (
+              <Button 
+                title="Request Permission" 
+                onPress={async () => {
+                  try {
+                    const result = await ExpoCallDetectorModule.requestPermission();
+                    await checkPermission();
+                  } catch (error) {
+                    Alert.alert('Error', 'Failed to request permission');
+                  }
+                }} 
+              />
+            )}
+          </View>
         </Group>
-        <Group name="Functions">
-          <Text>{ExpoCallDetector.hello()}</Text>
-        </Group>
-        <Group name="Async functions">
-          <Button
-            title="Set value"
-            onPress={async () => {
-              await ExpoCallDetector.setValueAsync('Hello from JS!');
-            }}
-          />
-        </Group>
-        <Group name="Events">
-          <Text>{onChangePayload?.value}</Text>
-        </Group>
-        <Group name="Views">
-          <ExpoCallDetectorView
-            url="https://www.example.com"
-            onLoad={({ nativeEvent: { url } }) => console.log(`Loaded: ${url}`)}
-            style={styles.view}
-          />
+        
+        <Group name="Call Detection">
+          <Text>Ready: {isReady ? 'Yes' : 'No'}</Text>
+          <Text>Call Active: {isCallActive ? 'Yes' : 'No'}</Text>
+          <Text style={{ fontSize: 30, marginTop: 10 }}>
+            {isCallActive ? '📞' : '☎️'}
+          </Text>
         </Group>
       </ScrollView>
     </SafeAreaView>

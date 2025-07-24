@@ -1,12 +1,13 @@
-import { NativeModule, requireNativeModule } from 'expo';
+import { NativeModule, requireNativeModule } from "expo";
+import { PermissionResponse } from "expo-modules-core";
 
-import { ExpoCallDetectorModuleEvents } from './ExpoCallDetector.types';
+import { ExpoCallDetectorModuleEvents } from "./ExpoCallDetector.types";
 
 declare class ExpoCallDetectorModule extends NativeModule<ExpoCallDetectorModuleEvents> {
-  PI: number;
-  hello(): string;
-  setValueAsync(value: string): Promise<void>;
+  startListening(): Promise<boolean>;
+  stopListening(): Promise<boolean>;
+  checkPermission(): Promise<boolean>;
+  requestPermission(): Promise<PermissionResponse>;
 }
 
-// This call loads the native module object from the JSI.
-export default requireNativeModule<ExpoCallDetectorModule>('ExpoCallDetector');
+export default requireNativeModule<ExpoCallDetectorModule>("ExpoCallDetector");

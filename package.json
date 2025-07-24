@@ -28,11 +28,13 @@
   "author": "Daksh <hello@dak.sh> (https://github.com/sudodaksh)",
   "license": "MIT",
   "homepage": "https://github.com/sudodaksh/expo-call-detector#readme",
-  "dependencies": {},
+  "dependencies": {
+    "expo-modules-core": "^2.5.0"
+  },
   "devDependencies": {
     "@types/react": "~19.0.0",
-    "expo-module-scripts": "^4.1.9",
     "expo": "~53.0.0",
+    "expo-module-scripts": "^4.1.9",
     "react-native": "0.79.1"
   },
   "peerDependencies": {
