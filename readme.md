@@ -16,9 +16,15 @@ Hook that automatically starts call detection and manages state.
 
 ```tsx
 import { useCallDetector } from "expo-call-detector";
+import ExpoCallDetectorModule from "expo-call-detector";
+import { useEffect } from "react";
 
 export default function App() {
   const { isCallActive, isReady } = useCallDetector();
+
+  useEffect(() => {
+    ExpoCallDetectorModule.requestPermission();
+  }, []);
 
   return <Text>{isCallActive ? "On Call" : "No Call"}</Text>;
 }
