@@ -20,7 +20,7 @@ import { useCallDetector } from "expo-call-detector";
 export default function App() {
   const { isCallActive, isReady } = useCallDetector();
 
-  return <Text>{isCallActive ? "=� On Call" : " No Call"}</Text>;
+  return <Text>{isCallActive ? "On Call" : "No Call"}</Text>;
 }
 ```
 
